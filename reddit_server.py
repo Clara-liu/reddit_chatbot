@@ -3,6 +3,7 @@ import os
 
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 
 load_dotenv()
@@ -14,13 +15,13 @@ get_var = lambda x: os.environ.get(x)
 
 
 @mcp.tool()
-async def search_reddit(query: str, top_k: int = 10) -> list | str:
+async def search_reddit(query: str, subreddits: str, top_k: int = 10) -> list | str:
     """
-    search reddit for relevant content. does not need async as all must be returned for LLM
-    to choose top k relevant submissions
+    search reddit for relevant content.
 
     Args:
         query (str): user query
+        subreddits (str): sub names delimited  by "+"
         top_k (int, optional): how many results to return. Defaults to 10.
 
     Returns:
@@ -29,20 +30,16 @@ async def search_reddit(query: str, top_k: int = 10) -> list | str:
         or
         str: error message
     """
-    async with asyncpraw.Reddit(
-        client_id = get_var("REDDIT_CLIENT_ID"),
-        client_secret = get_var("REDDIT_CLIENT_SECRET"),
-        user_agent = get_var("REDDIT_AGENT"),
-        password = get_var("REDDIT_PASSWORD"),
-        username = get_var("REDDIT_USERNAME")
-    ) as reddit:
-        sub = await reddit.subreddit("all")
+    async with reddit_context() as reddit:
+        sub = await reddit.subreddit(subreddits)
         results = []
         try:
-            async for submission in sub.search(query):
-                results.append({"url": submission.url, "title": submission.title, "id": submission.id})
+            async for submission in sub.search(query, limit=None, syntax="cloudsearch"):
+                if submission.is_self:
+                    results.append({"url": submission.url, "title": submission.title, "id": submission.id})
                 if len(results) == top_k:
-                    return results
+                    break
+            return results
         except Exception as e:
             return f"Error: {e}"
 
@@ -71,13 +68,7 @@ async def get_submission_info(submission_info: dict, k_top_comment: int = 8) -> 
         or
         str: error message
     """
-    async with asyncpraw.Reddit(
-        client_id = get_var("REDDIT_CLIENT_ID"),
-        client_secret = get_var("REDDIT_CLIENT_SECRET"),
-        user_agent = get_var("REDDIT_AGENT"),
-        password = get_var("REDDIT_PASSWORD"),
-        username = get_var("REDDIT_USERNAME")
-    ) as reddit:
+    async with reddit_context() as reddit:
         results = {
             "url": submission_info["url"],
             "body": None,
@@ -93,6 +84,47 @@ async def get_submission_info(submission_info: dict, k_top_comment: int = 8) -> 
             return f"Error: {e}"
 
 
+@mcp.tool()
+async def search_for_subreddits(query: str, top_k = 25)-> str:
+    """
+    Search reddit for relevant subreddits to user query.
+
+    Args:
+        query (str): user query
+        top_k (int, optional): how many subs to return. Defaults to 25.
+
+    Returns:
+        str: subreddit display names delimited by "+"
+    """
+    results = []
+    async with reddit_context() as reddit:
+        try:
+            subs = reddit.subreddits
+            async for sub in subs.search(query):
+                # filter out NSFW subs
+                if not sub.over18:
+                    results.append(sub.display_name)
+                if len(results) == top_k:
+                    break
+            return '+'.join(results)
+        except Exception as e:
+            return f"Error: {e}"
+
+
+@asynccontextmanager
+async def reddit_context():
+    get_var = lambda x: os.environ.get(x)
+    try:
+        reddit = asyncpraw.Reddit(
+            client_id = get_var("REDDIT_CLIENT_ID"),
+            client_secret = get_var("REDDIT_CLIENT_SECRET"),
+            user_agent = get_var("REDDIT_AGENT"),
+            password = get_var("REDDIT_PASSWORD"),
+            username = get_var("REDDIT_USERNAME")
+        )
+        yield reddit
+    finally:
+        await reddit.close()
 
 
 
