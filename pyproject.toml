@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "asyncpraw>=7.8.1",
     "mcp[cli]>=1.9.1",
-    "praw>=7.8.1",
+    "python-dotenv>=1.1.0",
 ]
