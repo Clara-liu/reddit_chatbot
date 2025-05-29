@@ -111,6 +111,26 @@ async def search_for_subreddits(query: str, top_k = 25)-> str:
             return f"Error: {e}"
 
 
+@mcp.prompt()
+def generate_narrow_subs_prompt(reddit_results: str, query: str) -> str:
+    return f""" We want to search reddit for relevant posts to the user's query:
+    {query}
+    ---
+    A subreddit search on reddit yields these subreddits as relevant to the user's query:
+    {', '.join(reddit_results.split('+'))}.
+    ---
+    Can you narrow down the the relevant subreddits by doing the following 4 steps:
+    1. First, see if there are any subreddits that are not relevant to the user's query
+    2. If there are, remove the irrelevant subreddits and return the subset in the following format:
+        subreddit1+subreddit2+subreddit3 (i.e. subreddit names delimited by the + sign)
+    3. If there are no irrelevant subreddits, return the original set of subreddits in the format
+        mentioned in point 2
+    4. If there are no relevant subreddits, return the string 'all'
+    Return the + delimited subreddit names by surrounding them in triple backticket like so
+    ```sub1+sub2+sub3```
+    """
+
+
 @asynccontextmanager
 async def reddit_context():
     get_var = lambda x: os.environ.get(x)

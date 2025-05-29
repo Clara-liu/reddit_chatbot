@@ -6,7 +6,6 @@ from google import genai
 from dotenv import load_dotenv
 from mcp.client.stdio import stdio_client
 from mcp import ClientSession, StdioServerParameters, types
-from typing import List
 
 nest_asyncio.apply()
 
@@ -17,21 +16,33 @@ class RedditChatbot:
     def __init__(self):
         self.session: ClientSession = None
         self.googleai = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
-        self.available_tools: List[dict] = []
     
     async def process_query(self, query: str):
         relevant_subs = await self.session.call_tool(
             name="search_for_subreddits",
-            arguments={"query":query}
+            arguments={"query": query, "top_k": 40}
         )
-        print("The subreddits related to your query are:\n", "\n".join(relevant_subs.content[0].text.split("+")))
+        relevant_subs = relevant_subs.content[0].text
+        print("Using tool search_for_subreddits.\nThe subreddits related to your query are:\n",
+            "\n".join(relevant_subs.split("+"))
+        )
+        subreddit_prompt = await self.session.get_prompt(
+            name="generate_narrow_subs_prompt",
+            arguments={"reddit_results": relevant_subs, "query": query}
+        )
+        subreddit_prompt = subreddit_prompt.messages[0].content
         
+        # Extract text from content (handles different formats)
+        if isinstance(subreddit_prompt, str):
+            prompt = subreddit_prompt
+        elif hasattr(subreddit_prompt, 'text'):
+            prompt = subreddit_prompt.text
+
         response = await self.googleai.aio.models.generate_content(
             model='gemini-2.0-flash',
-            contents=query,
+            contents=prompt,
         )
         # TODO: add logic to use tools and prompt llm
-        # TODO: add prompt server
         print(f"\nGemini's response:\n{response.text}")
 
 
@@ -60,15 +71,11 @@ class RedditChatbot:
             async with ClientSession(read, write) as session:
                 self.session = session
                 await session.initialize()  # handshake with server
+                tools = await session.list_tools()
+                print(f"\nConnected to reddit server with tools:{[tool.name for tool in tools.tools]}")
 
-                res = await session.list_tools()
-                print(f"\nConnected to reddit server with tools:{[tool.name for tool in res.tools]}")
-
-                self.available_tools = [{
-                    "name": tool.name,
-                    "description": tool.description,
-                    "input_schema": tool.inputSchema
-                } for tool in res.tools]
+                prompts = await session.list_prompts()
+                print(f"\nConnected to reddit server with prompts:{[prompt.name for prompt in prompts.prompts]}")
 
                 await self.chat_loop()
 
