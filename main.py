@@ -6,6 +6,7 @@ from google import genai
 from dotenv import load_dotenv
 from mcp.client.stdio import stdio_client
 from mcp import ClientSession, StdioServerParameters, types
+from utils import process_narrow_subs_response
 
 nest_asyncio.apply()
 
@@ -16,6 +17,7 @@ class RedditChatbot:
     def __init__(self):
         self.session: ClientSession = None
         self.googleai = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+        self.verbose = False
     
     async def process_query(self, query: str):
         relevant_subs = await self.session.call_tool(
@@ -31,19 +33,33 @@ class RedditChatbot:
             arguments={"reddit_results": relevant_subs, "query": query}
         )
         subreddit_prompt = subreddit_prompt.messages[0].content
-        
-        # Extract text from content (handles different formats)
-        if isinstance(subreddit_prompt, str):
-            prompt = subreddit_prompt
-        elif hasattr(subreddit_prompt, 'text'):
-            prompt = subreddit_prompt.text
 
+        # Extracts text from prompt content (handles different formats)        
+        process_prompt = lambda x: x if isinstance(x, str) else x.text
+
+        prompt = process_prompt(subreddit_prompt)
+
+        narrowed_subs = await self.process_sub_reddit_narrowing(prompt)
+        relevant_posts = await self.session.call_tool(
+            name="search_reddit",
+            arguments={"query": query, "subreddits": narrowed_subs, "top_k": 15}
+        )
+        relevant_posts = relevant_posts.content[0].text
+        # TODO: add method to process post narrowing with titles and finally process summarys
+        
+
+    async def process_sub_reddit_narrowing(self, prompt: str)-> str:
         response = await self.googleai.aio.models.generate_content(
             model='gemini-2.0-flash',
             contents=prompt,
         )
-        # TODO: add logic to use tools and prompt llm
-        print(f"\nGemini's response:\n{response.text}")
+        # get + delimited subreddit names
+        processed_response = process_narrow_subs_response(response.text)
+        if self.verbose:
+            print(f"\nGemini's response:\n{response.text}")
+        else:
+            print(f"Input to search reddit for relevant posts: {processed_response}")
+        return processed_response
 
 
     async def chat_loop(self):
@@ -54,7 +70,12 @@ class RedditChatbot:
                 query = input("\nQuery: ").strip()
                 if query.lower() == "quit":
                     break
-                    
+                verbosity = input("\nWould you like to see LLM thinking process? Type 'Yes' or skip" \
+                "for no.").lower()
+                if verbosity == "yes":
+                    self.verbose = True
+                elif verbosity == "" or verbosity == "no":
+                    self.verbose = False
                 await self.process_query(query)
                 print("\n")
             except Exception as e:
@@ -78,6 +99,7 @@ class RedditChatbot:
                 print(f"\nConnected to reddit server with prompts:{[prompt.name for prompt in prompts.prompts]}")
 
                 await self.chat_loop()
+
 
 async def main():
     chatbot = RedditChatbot()

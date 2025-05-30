@@ -1,9 +1,8 @@
-import asyncpraw
 import os
 
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
-from contextlib import asynccontextmanager
+from utils import reddit_context
 
 
 load_dotenv()
@@ -113,6 +112,9 @@ async def search_for_subreddits(query: str, top_k = 25)-> str:
 
 @mcp.prompt()
 def generate_narrow_subs_prompt(reddit_results: str, query: str) -> str:
+    """
+    generates prompt for LLM to narrow down subreddits
+    """
     return f""" We want to search reddit for relevant posts to the user's query:
     {query}
     ---
@@ -129,22 +131,6 @@ def generate_narrow_subs_prompt(reddit_results: str, query: str) -> str:
     Return the + delimited subreddit names by surrounding them in triple backticket like so
     ```sub1+sub2+sub3```
     """
-
-
-@asynccontextmanager
-async def reddit_context():
-    get_var = lambda x: os.environ.get(x)
-    try:
-        reddit = asyncpraw.Reddit(
-            client_id = get_var("REDDIT_CLIENT_ID"),
-            client_secret = get_var("REDDIT_CLIENT_SECRET"),
-            user_agent = get_var("REDDIT_AGENT"),
-            password = get_var("REDDIT_PASSWORD"),
-            username = get_var("REDDIT_USERNAME")
-        )
-        yield reddit
-    finally:
-        await reddit.close()
 
 
 
