@@ -1,6 +1,8 @@
 import os
 import asyncpraw
 
+import mcp.types as types
+
 from contextlib import asynccontextmanager
 
 
@@ -20,8 +22,17 @@ async def reddit_context():
         await reddit.close()
 
 
-def process_narrow_subs_response(raw_response: str) -> str:
+def process_scope_narrow_response(raw_response: str) -> str:
     """
     "All men ```must``` die" -> "must"
     """
     return raw_response.split("```")[1]
+
+
+def process_prompt(prompt: types.GetPromptResult) -> str:
+        prompt = prompt.messages[0].content
+        # Extracts text from prompt content (handles different formats)
+        if isinstance(prompt, str):
+             return prompt
+        else:
+             return prompt.text

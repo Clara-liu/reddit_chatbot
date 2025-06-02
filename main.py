@@ -1,4 +1,5 @@
 import os
+import json
 import asyncio
 import nest_asyncio
 
@@ -6,7 +7,7 @@ from google import genai
 from dotenv import load_dotenv
 from mcp.client.stdio import stdio_client
 from mcp import ClientSession, StdioServerParameters, types
-from utils import process_narrow_subs_response
+from utils import process_scope_narrow_response, process_prompt
 
 nest_asyncio.apply()
 
@@ -32,21 +33,68 @@ class RedditChatbot:
             name="generate_narrow_subs_prompt",
             arguments={"reddit_results": relevant_subs, "query": query}
         )
-        subreddit_prompt = subreddit_prompt.messages[0].content
+        subreddit_prompt = process_prompt(subreddit_prompt)
 
-        # Extracts text from prompt content (handles different formats)        
-        process_prompt = lambda x: x if isinstance(x, str) else x.text
-
-        prompt = process_prompt(subreddit_prompt)
-
-        narrowed_subs = await self.process_sub_reddit_narrowing(prompt)
+        narrowed_subs = await self.process_sub_reddit_narrowing(subreddit_prompt)
         relevant_posts = await self.session.call_tool(
             name="search_reddit",
             arguments={"query": query, "subreddits": narrowed_subs, "top_k": 15}
         )
-        relevant_posts = relevant_posts.content[0].text
+        relevant_posts = [json.loads(x.text) for x in relevant_posts.content]
+        relevant_posts_titles = "+".join([x["title"] for x in relevant_posts])
+
+        post_prompt = await self.session.get_prompt(
+            name="generate_narrow_posts_prompt",
+            arguments={"reddit_results": relevant_posts_titles, "query": query}
+        )
+        post_prompt = process_prompt(post_prompt)
+        # "post1+post2" or "none"
+        narrowed_posts: str = await self.process_post_reddit_narrowing(post_prompt)
+        narrowed_posts = narrowed_posts.split("+")
+        if 'none' in narrowed_posts and len(narrowed_posts)==1:
+            print("I'm sorry, but we couldn't find any relevant context on reddit." \
+            "Here is the LLM's vanilla response.")
+            response = await self.googleai.aio.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=query,
+            )
+            print(response.text)
+        else:
+            filter_func = lambda x: x["title"] in narrowed_posts
+            relevant_posts = filter(filter_func, relevant_posts)
+            relevant_posts_with_body = [
+                await self.session.call_tool(
+                    name="get_submission_info",
+                    arguments={"submission_info": x, "k_top_comment": 10}
+                )
+                for x in relevant_posts
+            ]
+            summary_prompt = await self.session.get_prompt(
+                name="generate_summary_prompt",
+                arguments={"reddit_results": str(relevant_posts_with_body), "query": query}
+            )
+            summary_prompt = process_prompt(summary_prompt)
+            answer = await self.googleai.aio.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=summary_prompt)
+            print(answer.text)
+
         # TODO: add method to process post narrowing with titles and finally process summarys
         
+
+    async def process_post_reddit_narrowing(self, prompt: str)-> str:
+        response = await self.googleai.aio.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=prompt,
+        )
+        # get + delimited subreddit names
+        processed_response = process_scope_narrow_response(response.text)
+        if self.verbose:
+            print(f"\nGemini's response:\n{response.text}")
+        else:
+            print(f"Input to LLM for post summary: {processed_response}")
+        return processed_response
+
 
     async def process_sub_reddit_narrowing(self, prompt: str)-> str:
         response = await self.googleai.aio.models.generate_content(
@@ -54,7 +102,7 @@ class RedditChatbot:
             contents=prompt,
         )
         # get + delimited subreddit names
-        processed_response = process_narrow_subs_response(response.text)
+        processed_response = process_scope_narrow_response(response.text)
         if self.verbose:
             print(f"\nGemini's response:\n{response.text}")
         else:

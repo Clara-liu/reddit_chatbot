@@ -1,5 +1,4 @@
-import os
-
+from itertools import islice
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
 from utils import reddit_context
@@ -9,8 +8,6 @@ load_dotenv()
 
 
 mcp = FastMCP("reddit")
-
-get_var = lambda x: os.environ.get(x)
 
 
 @mcp.tool()
@@ -76,7 +73,8 @@ async def get_submission_info(submission_info: dict, k_top_comment: int = 8) -> 
         }
         try:
             submission = await reddit.submission(submission_info["id"])
-            results["top_k_comments"] = [submission.comments[i].body for i in range(k_top_comment)]
+            results["top_k_comments"] = islice(submission.comments, k_top_comment+1)
+            results["top_k_comments"] = [x.body for x in results["top_k_comments"]]
             results["body"] = submission.selftext
             return results
         except Exception as e:
@@ -132,6 +130,62 @@ def generate_narrow_subs_prompt(reddit_results: str, query: str) -> str:
     ```sub1+sub2+sub3```
     """
 
+
+@mcp.prompt()
+def generate_narrow_posts_prompt(reddit_results: str, query: str) -> str:
+    """
+    generates prompt for LLM to narrow down posts. input example:
+    'post1+post2+post3'
+    """
+    return f""" We want to narrow relevant posts on reddit related to the user's query:
+    {query}
+    ---
+    A search on reddit yields these posts as relevant to the user's query:
+    {reddit_results}.
+    ---
+    Can you narrow down the the relevant posts by analysing their titles,
+     by doing the following 4 steps:
+    1. First, see if there are any posts that are not relevant to the user's query
+    2. If there are, remove the irrelevant posts and return the subset in the following format:
+        post1+post2+post3
+    3. If there are no irrelevant posts, return the original set of posts in the format
+        mentioned in point 2
+    4. If there are no relevant posts, return the string 'none'
+    Return the + delimited posts titles by surrounding them in triple backticket like so
+    ```post1+post2+post3```
+    """
+
+
+@mcp.prompt()
+def generate_summary_prompt(reddit_results: str, query: str) -> str:
+    """
+    generates prompt for LLM to summarise finds on reddit to answer user query
+    """
+    return f""" We want to summarise these posts on reddit and use them
+    to answer the user's query:
+    {query}.
+    The posts follow this format:
+    {{
+            "url": "https://example.com",
+            "body": "I have body hair",
+            "top_k_comments":[
+                "all",
+                "men",
+                "must",
+                "die"
+            ]
+            "title": "my title"
+        }}
+    
+    ---
+    You are given a list of posts as follows:
+    ---
+    {reddit_results}
+    ---
+    Please read through all of them, then give your summary in 
+    natural language to answer the user's query.
+    Also, give a link to the source when appropriate.
+    """
 
 
 if __name__ == "__main__":
