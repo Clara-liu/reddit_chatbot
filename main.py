@@ -78,8 +78,6 @@ class RedditChatbot:
                 model='gemini-2.0-flash',
                 contents=summary_prompt)
             print(answer.text)
-
-        # TODO: add method to process post narrowing with titles and finally process summarys
         
 
     async def process_post_reddit_narrowing(self, prompt: str)-> str:
